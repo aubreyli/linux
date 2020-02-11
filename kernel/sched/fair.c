@@ -5927,8 +5927,14 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, int t
 			return si_cpu;
 		if (!cpumask_test_cpu(cpu, p->cpus_ptr))
 			continue;
+#ifdef CONFIG_SCHED_CORE
+		if (available_idle_cpu(cpu) &&
+		    sched_core_cookie_match(cpu_rq(cpu), p))
+			break;
+#else
 		if (available_idle_cpu(cpu))
 			break;
+#endif
 		if (si_cpu == -1 && sched_idle_cpu(cpu))
 			si_cpu = cpu;
 	}
