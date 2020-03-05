@@ -553,6 +553,8 @@ out:
 static __always_inline
 void account_cfs_rq_runtime(struct cfs_rq *cfs_rq, u64 delta_exec);
 
+static inline bool sched_core_cookie_match(struct rq *rq, struct task_struct *p);
+
 /**************************************************************
  * Scheduling class tree data structure manipulation methods:
  */
@@ -10440,6 +10442,45 @@ static void core_sched_deactivate_fair(struct rq *rq)
 	for_each_fair_task(rq, sched_core_remove);
 }
 
+/*
+ * Helper to check if the CPU's core cookie matches with the task's cookie
+ * when core scheduling is enabled.
+ */
+static inline bool sched_core_cookie_match(struct rq *rq, struct task_struct *p)
+{
+	struct rq *src_rq = task_rq(p);
+	bool idle_core = true;
+	int cpu;
+
+	/* Ignore cookie match if core scheduler is not enabled on the CPU. */
+	if (!sched_core_enabled(rq))
+		return true;
+
+	if (rq->core->core_cookie == p->core_cookie)
+		return true;
+
+	for_each_cpu(cpu, cpu_smt_mask(cpu_of(rq))) {
+		if (!available_idle_cpu(cpu)) {
+			idle_core = false;
+			break;
+		}
+	}
+	/*
+	 * A CPU in an idle core is always the best choice for tasks with
+	 * cookies.
+	 */
+	if (idle_core)
+		return true;
+
+	/*
+	 * Ignore cookie match if there is a big imbalance between the src rq
+	 * and dst rq.
+	 */
+	if ((src_rq->cfs.h_nr_running - rq->cfs.h_nr_running) > 1)
+		return true;
+
+	return false;
+}
 #endif
 #endif /* CONFIG_SMP */
 
