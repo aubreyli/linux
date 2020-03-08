@@ -1017,6 +1017,7 @@ struct rq {
 	unsigned int		core_task_seq;
 	unsigned int		core_pick_seq;
 	unsigned long		core_cookie;
+	unsigned int		core_sched_policy;
 #endif
 };
 

@@ -626,6 +626,22 @@ struct wake_q_node {
 	struct wake_q_node *next;
 };
 
+#ifdef CONFIG_SCHED_CORE
+/*
+ * Core scheduling policy:
+ * - CORE_SCHED_DISABLED: core scheduling is disabled.
+ * - CORE_COOKIE_MATCH: tasks with same cookie can run
+ *			on the same core concurrently.
+ * - CORE_COOKIE_LONELY: tasks with cookie can run only
+ *			with idle thread on the same core.
+ */
+enum core_sched_policy {
+	CORE_SCHED_DISABLED,
+	CORE_SCHED_COOKIE_MATCH,
+	CORE_SCHED_COOKIE_LONELY,
+};
+#endif
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -686,6 +702,7 @@ struct task_struct {
 	struct rb_node			core_node;
 	unsigned long			core_cookie;
 	unsigned int			core_occupation;
+	unsigned int			core_sched_policy;
 #endif
 
 #ifdef CONFIG_CGROUP_SCHED

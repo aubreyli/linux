@@ -7560,6 +7560,7 @@ void __init sched_init(void)
 		rq->core_forceidle = false;
 
 		rq->core_cookie = 0UL;
+		rq->core_sched_policy = CORE_SCHED_DISABLED;
 #endif
 	}
 
