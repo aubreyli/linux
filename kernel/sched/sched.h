@@ -356,7 +356,7 @@ struct task_group {
 	struct cgroup_subsys_state css;
 
 #ifdef CONFIG_SCHED_CORE
-	int			tagged;
+	int			core_sched_policy;
 #endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED

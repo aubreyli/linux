@@ -4408,8 +4408,8 @@ pick_task(struct rq *rq, const struct sched_class *class, struct task_struct *ma
 
 	if (!cookie) {
 		/*
-		 * If class_pick is tagged, return it only if it has
-		 * higher priority than max.
+		 * If class_pick is assigned with core cookie,
+		 * return it only if it has higher priority than max.
 		 */
 		if (max && class_pick->core_cookie &&
 		    prio_less(class_pick, max))
@@ -7897,8 +7897,10 @@ static void sched_change_group(struct task_struct *tsk, int type)
 	if ((unsigned long)tsk->sched_task_group == tsk->core_cookie)
 		tsk->core_cookie = 0UL;
 
-	if (tg->tagged /* && !tsk->core_cookie ? */)
+	if (tg->core_sched_policy /* && !tsk->core_cookie ? */) {
 		tsk->core_cookie = (unsigned long)tg;
+		tsk->core_sched_policy = tg->core_sched_policy;
+	}
 #endif
 
 	tsk->sched_task_group = tg;
@@ -7991,9 +7993,9 @@ static void cpu_cgroup_css_offline(struct cgroup_subsys_state *css)
 #ifdef CONFIG_SCHED_CORE
 	struct task_group *tg = css_tg(css);
 
-	if (tg->tagged) {
+	if (tg->core_sched_policy) {
 		sched_core_put();
-		tg->tagged = 0;
+		tg->core_sched_policy = CORE_SCHED_DISABLED;
 	}
 #endif
 }
@@ -8559,37 +8561,40 @@ static u64 cpu_rt_period_read_uint(struct cgroup_subsys_state *css,
 #endif /* CONFIG_RT_GROUP_SCHED */
 
 #ifdef CONFIG_SCHED_CORE
-static u64 cpu_core_tag_read_u64(struct cgroup_subsys_state *css, struct cftype *cft)
+static u64 cpu_core_sched_policy_read_u64(struct cgroup_subsys_state *css,
+					struct cftype *cft)
 {
 	struct task_group *tg = css_tg(css);
 
-	return !!tg->tagged;
+	return tg->core_sched_policy;
 }
 
-struct write_core_tag {
+struct write_core_sched_policy {
 	struct cgroup_subsys_state *css;
 	int val;
 };
 
-static int __sched_write_tag(void *data)
+static int __sched_write_core_sched_policy(void *data)
 {
-	struct write_core_tag *tag = (struct write_core_tag *) data;
-	struct cgroup_subsys_state *css = tag->css;
-	int val = tag->val;
-	struct task_group *tg = css_tg(tag->css);
+	struct write_core_sched_policy *policy =
+			(struct write_core_sched_policy *) data;
+	struct cgroup_subsys_state *css = policy->css;
+	int val = policy->val;
+	struct task_group *tg = css_tg(policy->css);
 	struct css_task_iter it;
 	struct task_struct *p;
 
-	tg->tagged = !!val;
+	tg->core_sched_policy = val;
 
 	css_task_iter_start(css, 0, &it);
 	/*
-	 * Note: css_task_iter_next will skip dying tasks.
-	 * There could still be dying tasks left in the core queue
-	 * when we set cgroup tag to 0 when the loop is done below.
+	 * Note: css_task_iter_next will skip dying tasks. There could
+	 * still be dying tasks left in the core queue when we set cgroup
+	 * core sched policy to 0 when the loop is done below.
 	 */
 	while ((p = css_task_iter_next(&it))) {
-		p->core_cookie = !!val ? (unsigned long)tg : 0UL;
+		p->core_cookie = val ? (unsigned long)tg : 0UL;
+		p->core_sched_policy = val;
 
 		if (sched_core_enqueued(p)) {
 			sched_core_dequeue(task_rq(p), p);
@@ -8607,26 +8612,27 @@ static int __sched_write_tag(void *data)
 	return 0;
 }
 
-static int cpu_core_tag_write_u64(struct cgroup_subsys_state *css, struct cftype *cft, u64 val)
+static int cpu_core_sched_policy_write_u64(struct cgroup_subsys_state *css,
+					struct cftype *cft, u64 val)
 {
 	struct task_group *tg = css_tg(css);
-	struct write_core_tag wtag;
+	struct write_core_sched_policy wpolicy;
 
-	if (val > 1)
+	if (val > CORE_SCHED_COOKIE_LONELY)
 		return -ERANGE;
 
 	if (!static_branch_likely(&sched_smt_present))
 		return -EINVAL;
 
-	if (tg->tagged == !!val)
+	if (tg->core_sched_policy == val)
 		return 0;
 
-	if (!!val)
+	if (val)
 		sched_core_get();
 
-	wtag.css = css;
-	wtag.val = val;
-	stop_machine(__sched_write_tag, (void *) &wtag, NULL);
+	wpolicy.css = css;
+	wpolicy.val = val;
+	stop_machine(__sched_write_core_sched_policy, (void *) &wpolicy, NULL);
 	if (!val)
 		sched_core_put();
 
@@ -8672,10 +8678,10 @@ static struct cftype cpu_legacy_files[] = {
 #endif
 #ifdef CONFIG_SCHED_CORE
 	{
-		.name = "tag",
+		.name = "core_sched_policy",
 		.flags = CFTYPE_NOT_ON_ROOT,
-		.read_u64 = cpu_core_tag_read_u64,
-		.write_u64 = cpu_core_tag_write_u64,
+		.read_u64 = cpu_core_sched_policy_read_u64,
+		.write_u64 = cpu_core_sched_policy_write_u64,
 	},
 #endif
 #ifdef CONFIG_UCLAMP_TASK_GROUP
@@ -8853,10 +8859,10 @@ static struct cftype cpu_files[] = {
 #endif
 #ifdef CONFIG_SCHED_CORE
 	{
-		.name = "tag",
+		.name = "core_sched_policy",
 		.flags = CFTYPE_NOT_ON_ROOT,
-		.read_u64 = cpu_core_tag_read_u64,
-		.write_u64 = cpu_core_tag_write_u64,
+		.read_u64 = cpu_core_sched_policy_read_u64,
+		.write_u64 = cpu_core_sched_policy_write_u64,
 	},
 #endif
 #ifdef CONFIG_CFS_BANDWIDTH
