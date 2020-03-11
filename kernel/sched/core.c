@@ -4384,7 +4384,10 @@ static inline bool cookie_match(struct task_struct *a, struct task_struct *b)
 {
 	if (is_idle_task(a) || is_idle_task(b))
 		return true;
-
+	/*
+	 * XXX assumption: if the tasks have different core scheduling policy,
+	 * they should have different core_cookies.
+	 */
 	return a->core_cookie == b->core_cookie;
 }
 
@@ -4401,12 +4404,15 @@ pick_task(struct rq *rq, const struct sched_class *class, struct task_struct *ma
 {
 	struct task_struct *class_pick, *cookie_pick;
 	unsigned long cookie = rq->core->core_cookie;
+	unsigned int core_sched_policy = rq->core->core_sched_policy;
 
-	class_pick = class->pick_task(rq);
-	if (!class_pick)
-		return NULL;
+	switch(core_sched_policy) {
+	case CORE_SCHED_DISABLED:
+		class_pick = class->pick_task(rq);
+		if (!class_pick)
+			return NULL;
 
-	if (!cookie) {
+		WARN_ON_ONCE(cookie);
 		/*
 		 * If class_pick is assigned with core cookie,
 		 * return it only if it has higher priority than max.
@@ -4416,26 +4422,45 @@ pick_task(struct rq *rq, const struct sched_class *class, struct task_struct *ma
 			return idle_sched_class.pick_task(rq);
 
 		return class_pick;
+
+	case CORE_SCHED_COOKIE_MATCH:
+		class_pick = class->pick_task(rq);
+		if (!class_pick)
+			return NULL;
+
+		WARN_ON_ONCE(!cookie);
+		/*
+		 * If class_pick is idle or matches cookie, return early.
+		 */
+		if (cookie_equals(class_pick, cookie))
+			return class_pick;
+
+		cookie_pick = sched_core_find(rq, cookie);
+
+		/*
+		 * If class > max && class > cookie, it is the highest
+		 * priority task on the core (so far) and it must be
+		 * selected, otherwise we must go with the cookie pick
+		 * in order to satisfy the constraint.
+		 */
+		if (prio_less(cookie_pick, class_pick) &&
+		    (!max || prio_less(max, class_pick)))
+			return class_pick;
+
+		return cookie_pick;
+
+	case CORE_SCHED_COOKIE_LONELY:
+		/*
+		 * If this run queue's core scheduling policy is
+		 * CORE_SCHED_COOKIE_LONELY, that means there is
+		 * another sibling already pick up lonely scheduling
+		 * task, only idle task is allowed for this pickup.
+		 */
+		return idle_sched_class.pick_task(rq);
 	}
 
-	/*
-	 * If class_pick is idle or matches cookie, return early.
-	 */
-	if (cookie_equals(class_pick, cookie))
-		return class_pick;
-
-	cookie_pick = sched_core_find(rq, cookie);
-
-	/*
-	 * If class > max && class > cookie, it is the highest priority task on
-	 * the core (so far) and it must be selected, otherwise we must go with
-	 * the cookie pick in order to satisfy the constraint.
-	 */
-	if (prio_less(cookie_pick, class_pick) &&
-	    (!max || prio_less(max, class_pick)))
-		return class_pick;
-
-	return cookie_pick;
+	/* We should never reach here */
+	return NULL;
 }
 
 static struct task_struct *
@@ -4500,6 +4525,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 
 	/* reset state */
 	rq->core->core_cookie = 0UL;
+	rq->core->core_sched_policy = CORE_SCHED_DISABLED;
 	for_each_cpu(i, smt_mask) {
 		struct rq *rq_i = cpu_rq(i);
 
@@ -4567,8 +4593,8 @@ again:
 
 			rq_i->core_pick = p;
 
-			trace_printk("cpu(%d): selected: %s/%d %lx\n",
-				     i, p->comm, p->pid, p->core_cookie);
+			trace_printk("cpu(%d): selected: %s/%d %lx, policy:%d\n",
+				     i, p->comm, p->pid, p->core_cookie, p->core_sched_policy);
 
 			/*
 			 * If this new candidate is of higher priority than the
@@ -4584,9 +4610,11 @@ again:
 				struct task_struct *old_max = max;
 
 				rq->core->core_cookie = p->core_cookie;
+				rq->core->core_sched_policy = p->core_sched_policy;
 				max = p;
 
-				trace_printk("max: %s/%d %lx\n", max->comm, max->pid, max->core_cookie);
+				trace_printk("max: %s/%d %lx, policy:%d\n", max->comm,
+						max->pid, max->core_cookie, rq->core->core_sched_policy);
 
 				if (old_max) {
 					for_each_cpu(j, smt_mask) {
