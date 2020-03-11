@@ -4695,6 +4695,7 @@ static bool try_steal_cookie(int this, int that)
 	struct rq *dst = cpu_rq(this), *src = cpu_rq(that);
 	struct task_struct *p;
 	unsigned long cookie;
+	int policy;
 	bool success = false;
 
 	local_irq_disable();
@@ -4702,6 +4703,10 @@ static bool try_steal_cookie(int this, int that)
 
 	cookie = dst->core->core_cookie;
 	if (!cookie)
+		goto unlock;
+
+	policy = dst->core->core_sched_policy;
+	if (policy != CORE_SCHED_COOKIE_MATCH)
 		goto unlock;
 
 	if (dst->curr != dst->idle)
